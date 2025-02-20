@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PO to JSON Converter with Multi-line Support</title>
+</head>
+<body>
+  <h2>PO to JSON Converter</h2>
+  <p>Select a .po file to convert it into JSON.</p>
+  <input type="file" id="fileInput" accept=".po" />
+  <br /><br />
+  <button onclick="convert()">Convert</button>
+  <br /><br />
+  <textarea id="jsonOutput" rows="20" cols="80" placeholder="Your JSON will appear here"></textarea>
+  <br /><br />
+  <button onclick="downloadJSONFile()">Download JSON</button>
+
+  <script>
+    // Default domain value (adjust as needed)
+    const defaultDomain = "superset";
+    let convertedJSON = null;
+
+    function parsePO(content, defaultDomain = "superset") {
+      const lines = content.split("\n");
+      const entries = [];
+      let currentEntry = { msgidParts: [], msgstrParts: [] };
+      let currentState = null; // "msgid" or "msgstr"
+
+      // Process each line.
+      lines.forEach(line => {
+        line = line.trim();
+        // Empty line indicates end of an entry.
+        if (line === "") {
+          if (currentEntry.msgidParts.length || currentEntry.msgstrParts.length) {
+            entries.push({ ...currentEntry });
+          }
+          currentEntry = { msgidParts: [], msgstrParts: [] };
+          currentState = null;
+          return;
+        }
+        // Ignore comments.
+        if (line.startsWith("#")) {
+          return;
+        }
+        if (line.startsWith("msgid")) {
+          // If starting a new msgid, save previous entry if any.
+          if (currentEntry.msgidParts.length || currentEntry.msgstrParts.length) {
+            entries.push({ ...currentEntry });
+            currentEntry = { msgidParts: [], msgstrParts: [] };
+          }
+          const match = line.match(/^msgid\s+"(.*)"$/);
+          if (match) {
+            currentEntry.msgidParts.push(match[1]);
+            currentState = "msgid";
+          }
+        } else if (line.startsWith("msgstr")) {
+          const match = line.match(/^msgstr\s+"(.*)"$/);
+          if (match) {
+            currentEntry.msgstrParts.push(match[1]);
+            currentState = "msgstr";
+          }
+        } else if (line.startsWith('"')) {
+          const match = line.match(/^"(.*)"$/);
+          if (match && currentState) {
+            if (currentState === "msgid") {
+              currentEntry.msgidParts.push(match[1]);
+            } else if (currentState === "msgstr") {
+              currentEntry.msgstrParts.push(match[1]);
+            }
+          }
+        }
+      });
+      // Push the last entry if any.
+      if (currentEntry.msgidParts.length || currentEntry.msgstrParts.length) {
+        entries.push({ ...currentEntry });
+      }
+
+      // Build the translations object.
+      const translations = {};
+      let headerMeta = {};
+
+      entries.forEach(entry => {
+        // Concatenate msgid parts to get the full key.
+        const msgid = entry.msgidParts.join('');
+        if (msgid === "") {
+          // Header entry: extract metadata.
+          const headerStr = entry.msgstrParts.join('');
+          // Use actual newline characters for splitting.
+          const headerLines = headerStr.split("\n");
+          headerLines.forEach(line => {
+            if (line.startsWith("Plural-Forms:")) {
+              headerMeta.plural_forms = line.replace("Plural-Forms:", "").trim().replace(/;?$/, "");
+            }
+            if (line.startsWith("Language:")) {
+              headerMeta.lang = line.replace("Language:", "").trim();
+            }
+          });
+          headerMeta.domain = defaultDomain;
+        } else {
+          // For normal entries, remove a leading empty string if there are more lines.
+          let cleanedMsgstrParts = entry.msgstrParts;
+          if (cleanedMsgstrParts.length > 1 && cleanedMsgstrParts[0] === "") {
+            cleanedMsgstrParts = cleanedMsgstrParts.slice(1);
+          }
+          translations[msgid] = cleanedMsgstrParts;
+        }
+      });
+
+      // Include header metadata using an empty string as the key.
+      translations[""] = headerMeta;
+
+      // Construct the final JSON structure.
+      return {
+        domain: defaultDomain,
+        locale_data: {
+          [defaultDomain]: translations
+        }
+      };
+    }
+
+    // Convert the selected .po file.
+    function convert() {
+      const fileInput = document.getElementById("fileInput");
+      const outputArea = document.getElementById("jsonOutput");
+
+      if (!fileInput.files.length) {
+        alert("Please select a .po file.");
+        return;
+      }
+
+      const file = fileInput.files[0];
+      const reader = new FileReader();
+
+      reader.onload = function(e) {
+        const content = e.target.result;
+        convertedJSON = parsePO(content, defaultDomain);
+        outputArea.value = JSON.stringify(convertedJSON, null, 2);
+      };
+
+      reader.readAsText(file);
+    }
+
+    // Download the JSON as a file.
+    function downloadJSONFile() {
+      if (!convertedJSON) {
+        alert("No JSON available to download. Please convert a file first.");
+        return;
+      }
+      const jsonStr = JSON.stringify(convertedJSON, null, 2);
+      const blob = new Blob([jsonStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "translations.json";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>
